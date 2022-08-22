@@ -345,6 +345,115 @@ macro_rules! expose_reference {
                 }
             }
         }
+    };
+    ($Structure:ident, $RefField:ident, $RefType:ty, $RefName:ident, $RefVariant:ident) => {
+        paste::paste! {
+            impl $Structure {
+                #[doc =
+                    "Gets an immutable reference to the " $RefVariant " for this `" $Structure "`\n"
+                    "### Returns\n"
+                    "The immutable reference to the " $RefVariant " for this `" $Structure "`\n"
+                    "### Panicking\n"
+                    "This function panics if the [table reference](TableReference) to the " $RefVariant
+                    " is not [resolved](TableReference::resolve)."
+                ]
+                pub fn [<$RefVariant:snake>](&self) -> Ref<'_, $RefType> {
+                    self.$RefField.[<$RefVariant:snake>]().get()
+                }
+
+                #[doc =
+                    "Gets the mutable reference to the " $RefVariant " for this `" $Structure "`\n"
+                    "### Returns\n"
+                    "The mutable reference to the " $RefVariant " for this `" $Structure "`\n"
+                    "### Panicking\n"
+                    "This function panics if the [table reference](TableReference) to the " $RefVariant
+                    " is not [resolved](TableReference::resolve)."
+                ]
+                pub fn [<$RefVariant:snake _mut>](&self) -> RefMut<'_, $RefType> {
+                    self.$RefField.[<$RefVariant:snake>]().get_mut()
+                }
+
+                #[doc =
+                    "Sets the reference for this `" $Structure "`'s " $RefVariant " to the specified cell\n"
+                    "### Arguments\n"
+                    "* `cell` - The cell to set the reference to\n"
+                ]
+                pub fn [<set_ $RefVariant:snake>](&mut self, cell: TableCell<$RefType>) {
+                    self.$RefField = $RefName::$RefVariant(cell);
+                }
+
+                #[doc =
+                    "Gets an immutable reference to the underlying cell for this `" $Structure "`'s " $RefVariant "\n"
+                    "### Returns\n"
+                    "An immutable reference to the underlying cell"
+                    "### Panicking\n"
+                    "This function panics if the [table reference](TableReference) to the " $RefVariant
+                    " is not [resolved](TableReference::resolve)."
+                ]
+                pub fn [<raw_ $RefVariant:snake>](&self) -> &TableCell<$RefType> {
+                    self.$RefField.[<$RefVariant:snake>]()
+                }
+            }
+        }
+    };
+    (optional, $Structure:ident, $RefField:ident, $RefType:ty, $RefName:ident, $RefVariant:ident) => {
+        paste::paste! {
+            impl $Structure {
+                #[doc =
+                    "Gets an immutable reference to the " $RefVariant " for this `" $Structure "`\n"
+                    "### Returns\n"
+                    "The immutable reference to the " $RefVariant " for this `" $Structure "`\n"
+                    "### Panicking\n"
+                    "This function panics if the [table reference](TableReference) to the " $RefVariant
+                    " is not [resolved](TableReference::resolve)."
+                ]
+                pub fn [<$RefVariant:snake>](&self) -> Ref<'_, $RefType> {
+                    self.$RefField.[<$RefVariant:snake>]().get()
+                }
+
+                #[doc =
+                    "Gets the mutable reference to the " $RefVariant " for this `" $Structure "`\n"
+                    "### Returns\n"
+                    "The mutable reference to the " $RefVariant " for this `" $Structure "`\n"
+                    "### Panicking\n"
+                    "This function panics if the [table reference](TableReference) to the " $RefVariant
+                    " is not [resolved](TableReference::resolve)."
+                ]
+                pub fn [<$RefVariant:snake _mut>](&self) -> RefMut<'_, $RefType> {
+                    self.$RefField.[<$RefVariant:snake>]().get_mut()
+                }
+
+                #[doc =
+                    "Sets the reference for this `" $Structure "`'s " $RefVariant " to the specified cell\n"
+                    "### Arguments\n"
+                    "* `cell` - The cell to set the reference to\n"
+                ]
+                pub fn [<set_ $RefVariant:snake>](&mut self, cell: TableCell<$RefType>) {
+                    self.$RefField = $RefName::$RefVariant(cell);
+                }
+
+                #[doc =
+                    "Gets an immutable reference to the underlying cell for this `" $Structure "`'s " $RefVariant "\n"
+                    "### Returns\n"
+                    "An immutable reference to the underlying cell"
+                    "### Panicking\n"
+                    "This function panics if the [table reference](TableReference) to the " $RefVariant
+                    " is not [resolved](TableReference::resolve)."
+                ]
+                pub fn [<raw_ $RefVariant:snake>](&self) -> &TableCell<$RefType> {
+                    self.$RefField.[<$RefVariant:snake>]()
+                }
+
+                #[doc =
+                    "Checks if the reference for this `" $Structure "`'s " $RefVariant " is valid\n"
+                    "### Returns\n"
+                    "Whether or not this `" $Structure "` holds a reference to a " $RefVariant "\n"
+                ]
+                pub fn [<has_ $RefVariant:snake>](&self) -> bool {
+                    self.$RefField.[<is_ $RefVariant:snake>]()
+                }
+            }
+        }
     }
 }
 
@@ -787,6 +896,17 @@ pub trait LinkedReference: Sized {
 pub struct TableLinkedReference<T: LinkedReference>(TableReferenceSet<T, usize>);
 
 impl<T: LinkedReference> TableLinkedReference<T> {
+    /// Helper method for creating a new unresolved reference set
+    ///
+    /// ### Arguments
+    /// * `start` - The starting unresolved index
+    ///
+    /// ### Returns
+    /// The unresolved reference set
+    pub fn new(start: usize) -> Self {
+        Self(TableReferenceSet::Unresolved(start))
+    }
+
     /// Resolves the reference if it is currently unresolved
     ///
     /// ### Arguments

@@ -31,6 +31,7 @@ impl const Hashable for Hash40 {
 }
 
 #[test]
+#[ignore]
 fn stream_test() {
     use std::path::Path;
 
@@ -70,4 +71,19 @@ fn stream_test() {
             panic!("{}", file);
         }
     }
+}
+
+#[test]
+fn search_test() {
+    let engine = engines::search::SearchEngine::from_directory(
+        "/Users/blujay/Documents/Arc-Filesystems/filesystem_13.0.1",
+    )
+    .unwrap();
+
+    engine.resolve();
+
+    let writer = engines::search::SearchWriter::from_engine(engine);
+    writer
+        .to_directory("/Users/blujay/Documents/Arc-Filesystems/filesystem_13.0.1/roundtrip")
+        .unwrap();
 }

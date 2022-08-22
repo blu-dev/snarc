@@ -6,6 +6,7 @@ use crate::HASH_MASK;
 
 pub mod table;
 
+pub mod search;
 pub mod stream;
 
 use binrw::{BinRead, BinWrite, VecArgs};
