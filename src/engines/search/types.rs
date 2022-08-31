@@ -1,15 +1,18 @@
 use std::{
     cell::{Ref, RefMut},
-    collections::BTreeMap, rc::Rc
+    collections::BTreeMap, rc::Rc, str::FromStr
 };
 
 use binrw::{binread, BinWrite};
+use camino::Utf8Path;
 use hash40::Hash40;
 
 use crate::{
     engines::{table::*, HashKey},
-    INVALID_INDEX, INVALID_INDEX32,
+    INVALID_INDEX, INVALID_INDEX32, Hashable,
 };
+
+use thiserror::Error;
 
 use super::SearchWriter;
 
@@ -45,13 +48,16 @@ pub struct SearchFolder {
     #[br(calc = path_and_folder_count.index())]
     pub folder_count: usize,
 
-    #[br(align_after = 0x8)]
+    #[br(pad_after = 0x4)]
     #[br(temp)]
     first_child_index: u32,
 
     /// The children of the folder
     #[br(calc = TableLinkedReference::new(first_child_index as usize))]
     pub children: TableLinkedReference<SearchPath>,
+
+    #[br(temp)]
+    unused: (),
 }
 
 multi_reference!(
@@ -143,6 +149,22 @@ pub struct SearchPath {
         }
     })]
     next: SearchPathNextReference,
+
+    // #[br(calc = println!("{}", full_path))]
+    // #[br(temp)]
+    // unused: (),
+}
+
+#[derive(Debug, Error)]
+pub enum SearchFromStrError {
+    #[error("Path should have a file-name")]
+    MissingFileName,
+
+    #[error("Path should have an extension")]
+    MissingExtension,
+
+    #[error("Path should have a valid parent")]
+    MissingParent,
 }
 
 impl SearchPathFolderReference {
@@ -201,6 +223,41 @@ impl SearchFolder {
     pub fn is_resolved(&self) -> bool {
         self.children.is_resolved()
     }
+
+    pub fn get_child_by_name(&self, name: impl Hashable) -> Option<Ref<'_, SearchPath>> {
+        let name = name.to_hash();
+
+        self.children.iter().find(|child| child.name == name)
+    }
+
+    pub fn push_child(&mut self, child: TableCell<SearchPath>) {
+        if let Some(last) = self.children.cells().last() {
+            last.get_mut().set_path(child.clone());
+        }
+
+        self.children.push(child);
+    }
+}
+
+impl FromStr for SearchFolder {
+    type Err = SearchFromStrError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let path = Utf8Path::new(s);
+
+        let full_path = path.as_str().to_hash();
+        let parent = path.parent().ok_or(SearchFromStrError::MissingParent)?.as_str().to_hash();
+        let name = path.file_name().ok_or(SearchFromStrError::MissingFileName)?.to_hash();
+
+        Ok(Self {
+            full_path,
+            parent,
+            name,
+            file_count: 0,
+            folder_count: 0,
+            children: TableLinkedReference::invalid(),
+        })
+    }
 }
 
 impl SearchPath {
@@ -237,7 +294,38 @@ impl SearchPath {
     }
 }
 
+impl FromStr for SearchPath {
+    type Err = SearchFromStrError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let path = Utf8Path::new(s);
+
+        let full_path = path.as_str().to_hash();
+        let parent = path.parent().ok_or(SearchFromStrError::MissingParent)?.as_str().to_hash();
+        let name = path.file_name().ok_or(SearchFromStrError::MissingFileName)?.to_hash();
+        let extension = path.extension().map_or(Hash40::new(""), Hashable::to_hash);
+
+        let folder = if extension == Hash40::new("") {
+            let mut folder = SearchFolder::from_str(s)?;
+            folder.children.replace(vec![]);
+            SearchPathFolderReference::Folder(TableCell::new(folder))
+        } else {
+            SearchPathFolderReference::None
+        };
+
+        Ok(Self {
+            full_path,
+            parent,
+            name,
+            extension,
+            folder,
+            next: SearchPathNextReference::None
+        })
+    }
+}
+
 expose_reference!(SearchPath, folder, SearchFolder, SearchPathFolderReference, Folder);
+expose_reference!(optional, SearchPath, next, SearchPath, SearchPathNextReference, Path);
 
 impl LinkedReference for SearchPath {
     fn next(&self) -> Option<TableCell<Self>> {

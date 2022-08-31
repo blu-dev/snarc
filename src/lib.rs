@@ -1,7 +1,37 @@
 #![feature(const_trait_impl)]
+use std::io::Read;
+
 use hash40::Hash40;
 
+pub mod archive;
 pub mod engines;
+
+#[cfg(feature = "raw")]
+pub mod raw;
+
+pub trait Decompressor: Sync + Send {
+    fn decompress(&self, data: &[u8]) -> std::io::Result<Vec<u8>>;
+    fn decompress_with_size(&self, data: &[u8], size: usize) -> std::io::Result<Vec<u8>>;
+}
+
+pub struct DefaultDecompressor;
+
+impl Decompressor for DefaultDecompressor {
+    fn decompress(&self, data: &[u8]) -> std::io::Result<Vec<u8>> {
+        let mut decoder = ruzstd::StreamingDecoder::new(std::io::Cursor::new(data)).unwrap();
+        let mut data = Vec::new();
+        decoder.read_to_end(&mut data).map(|_| data)
+    }
+
+    fn decompress_with_size(&self, data: &[u8], size: usize) -> std::io::Result<Vec<u8>> {
+        let mut decoder = ruzstd::StreamingDecoder::new(std::io::Cursor::new(data)).unwrap();
+        let mut data = Vec::with_capacity(size);
+        decoder.read_to_end(&mut data).map(|_| data)
+    }
+}
+
+static GLOBAL_DECOMPRESSOR: std::sync::RwLock<&'static dyn Decompressor> =
+    std::sync::RwLock::new(&DefaultDecompressor);
 
 /// The invalid index for any archive table
 ///
@@ -30,60 +60,34 @@ impl const Hashable for Hash40 {
     }
 }
 
-#[test]
-#[ignore]
-fn stream_test() {
-    use std::path::Path;
-
-    let engine = engines::stream::StreamEngine::from_directory(
-        "/Users/blujay/Documents/Arc-Filesystems/filesystem_13.0.1",
-    )
-    .unwrap();
-
-    engine.resolve();
-
-    engine
-        .get_path("stream:/sound/bgm/bgm_crs01_menu.nus3audio")
-        .unwrap();
-
-    let writer = engines::stream::StreamWriter::from_engine(engine);
-    writer
-        .to_directory("/Users/blujay/Documents/Arc-Filesystems/filesystem_13.0.1/roundtrip")
-        .unwrap();
-
-    for file in [
-        "stream_folders.bin",
-        "stream_paths.bin",
-        "stream_metadatas.bin",
-        "stream_path_keys.bin",
-        "stream_links.bin",
-    ] {
-        if std::fs::read(
-            Path::new("/Users/blujay/Documents/Arc-Filesystems/filesystem_13.0.1").join(file),
-        )
-        .unwrap()
-            != std::fs::read(
-                Path::new("/Users/blujay/Documents/Arc-Filesystems/filesystem_13.0.1/roundtrip")
-                    .join(file),
-            )
-            .unwrap()
-        {
-            panic!("{}", file);
-        }
-    }
+pub fn load_labels(labels: impl AsRef<std::path::Path>) {
+    let map = Hash40::label_map();
+    let mut lock = map.lock().unwrap();
+    lock.add_labels_from_path(labels).unwrap();
 }
 
-#[test]
-fn search_test() {
-    let engine = engines::search::SearchEngine::from_directory(
-        "/Users/blujay/Documents/Arc-Filesystems/filesystem_13.0.1",
-    )
-    .unwrap();
+pub fn decompress_data(data: impl AsRef<[u8]>) -> Vec<u8> {
+    GLOBAL_DECOMPRESSOR
+        .read()
+        .unwrap()
+        .decompress(data.as_ref())
+        .unwrap()
+}
 
-    engine.resolve();
+pub fn decompress_data_with_size(data: impl AsRef<[u8]>, decompressed_size: usize) -> Vec<u8> {
+    GLOBAL_DECOMPRESSOR
+        .read()
+        .unwrap()
+        .decompress_with_size(data.as_ref(), decompressed_size)
+        .unwrap()
+}
 
-    let writer = engines::search::SearchWriter::from_engine(engine);
-    writer
-        .to_directory("/Users/blujay/Documents/Arc-Filesystems/filesystem_13.0.1/roundtrip")
-        .unwrap();
+pub fn set_decompressor(decompressor: &'static dyn Decompressor) {
+    *GLOBAL_DECOMPRESSOR.write().unwrap() = decompressor;
+}
+
+#[cfg(feature = "compression")]
+pub fn compress_data(data: impl AsRef<[u8]>) -> Vec<u8> {
+    let data = data.as_ref();
+    zstd::encode_all(std::io::Cursor::new(data), 0).unwrap()
 }

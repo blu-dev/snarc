@@ -39,6 +39,11 @@ macro_rules! multi_reference {
 
         paste::paste! {
             impl $Reference {
+                #[doc = "Returns an unresolved, invalid reference\n"]
+                pub fn invalid() -> Self {
+                    Self::Unresolved(INVALID_INDEX)
+                }
+
                 #[doc =
                     "Checks if this reference is resolved\n"
                     "### Returns\n"
@@ -167,7 +172,7 @@ macro_rules! multi_reference {
         $vis enum $Reference {
             $(
                 $(#[$inner $($args)*])*
-                $Variant(TableReferenceSet<$T, Range<usize>>),
+                $Variant(TableContiguousReference<$T>),
             )*
             Unresolved(Range<usize>),
         }
@@ -181,6 +186,11 @@ macro_rules! multi_reference {
                 ]
                 pub fn is_resolved(&self) -> bool {
                     !matches!(self, Self::Unresolved(_))
+                }
+
+                #[doc = "Returns an unresolved, invalid reference\n"]
+                pub fn invalid() -> Self {
+                    Self::Unresolved(INVALID_INDEX..INVALID_INDEX)
                 }
 
                 $(
@@ -205,7 +215,22 @@ macro_rules! multi_reference {
                         "* The reference is unresolved\n"
                         "* This is not a reference to a `" $Variant "`"
                     ]
-                    pub fn [<$Variant:snake>](&self) -> &TableReferenceSet<$T, Range<usize>> {
+                    pub fn [<$Variant:snake>](&self) -> &TableContiguousReference<$T> {
+                        match self {
+                            Self::$Variant(set) => set,
+                            Self::Unresolved(_) => panic!("Table reference is unresolved"),
+                            _ => panic!("Table reference is not a {}", stringify!($Variant))
+                        }
+                    }
+
+                    #[doc =
+                        "Gets the mutable reference to the underlying `" $Variant "` set from this reference\n"
+                        "### Panicking\n"
+                        "* The reference is unresolved\n"
+                        "* There is already another mutable reference active\n"
+                        "* This is not a reference to a `" $Variant "`"
+                    ]
+                    pub fn [<$Variant:snake _mut>](&mut self) -> &mut TableContiguousReference<$T> {
                         match self {
                             Self::$Variant(set) => set,
                             Self::Unresolved(_) => panic!("Table reference is unresolved"),
@@ -231,7 +256,7 @@ macro_rules! multi_reference {
             None,
             $(
                 $(#[$inner $($args)*])*
-                $Variant(TableReferenceSet<$T, Range<usize>>),
+                $Variant(TableContiguousReference<$T, Range<usize>>),
             )*
             Unresolved(Range<usize>),
         }
@@ -278,7 +303,7 @@ macro_rules! multi_reference {
                         "* The reference is unresolved\n"
                         "* This is not a reference to a `" $Variant "`"
                     ]
-                    pub fn [<$Variant:snake>](&self) -> &TableReferenceSet<$T, Range<usize>> {
+                    pub fn [<$Variant:snake>](&self) -> &TableContiguousReference<$T> {
                         match self {
                             Self::$Variant(set) => set,
                             Self::Unresolved(_) => panic!("Table reference is unresolved"),
@@ -392,6 +417,13 @@ macro_rules! expose_reference {
                 ]
                 pub fn [<raw_ $RefVariant:snake>](&self) -> &TableCell<$RefType> {
                     self.$RefField.[<$RefVariant:snake>]()
+                }
+
+                #[doc =
+                    "Checks if the " $RefField " of this `" $Structure "` is a " $RefVariant "\n"
+                ]
+                pub fn [<is_ $RefField _ $RefVariant:snake>](&self) -> bool {
+                    self.$RefField.[<is_ $RefVariant:snake>]()
                 }
             }
         }
@@ -585,6 +617,10 @@ pub enum TableReference<T: Sized> {
 }
 
 impl<T: Sized> TableReference<T> {
+    pub fn invalid() -> Self {
+        Self::Unresolved(INVALID_INDEX)
+    }
+
     /// Resolves the reference if it is currently unresolved
     ///
     /// ### Arguments
@@ -769,6 +805,22 @@ impl<T: Sized, U: Sized> TableReferenceSet<T, U> {
     pub fn cells(&self) -> &[TableCell<T>] {
         when_resolved!(self, set, set.as_slice())
     }
+
+    pub fn cells_mut(&mut self) -> &mut [TableCell<T>] {
+        when_resolved!(self, set, set.as_mut_slice())
+    }
+
+    pub fn replace(&mut self, set: Vec<TableCell<T>>) {
+        *self = TableReferenceSet::Resolved(set);
+    }
+
+    pub fn get(&self, index: usize) -> Ref<'_, T> {
+        when_resolved!(self, set, set[index].get())
+    }
+
+    pub fn get_mut(&self, index: usize) -> RefMut<'_, T> {
+        when_resolved!(self, set, set[index].get_mut())
+    }
 }
 
 /// A reference to a set of archive structures which are consecutive
@@ -780,9 +832,13 @@ impl<T: Sized, U: Sized> TableReferenceSet<T, U> {
 /// It implements [`Deref`] and [`DerefMut`] on [`TableReferenceSet`] for
 /// simple access to all of the cells.
 #[repr(transparent)]
-pub struct TableContiguousReference<T: Sized>(TableReferenceSet<T, Range<usize>>);
+pub struct TableContiguousReference<T: Sized>(pub(crate) TableReferenceSet<T, Range<usize>>);
 
 impl<T: Sized> TableContiguousReference<T> {
+    pub fn invalid() -> Self {
+        Self(TableReferenceSet::Unresolved(INVALID_INDEX..INVALID_INDEX))
+    }
+
     /// Constructs a new, unresolved reference set from the start index and the number of elements
     ///
     /// ### Arguments
@@ -896,6 +952,10 @@ pub trait LinkedReference: Sized {
 pub struct TableLinkedReference<T: LinkedReference>(TableReferenceSet<T, usize>);
 
 impl<T: LinkedReference> TableLinkedReference<T> {
+    pub fn invalid() -> Self {
+        Self::new(INVALID_INDEX)
+    }
+
     /// Helper method for creating a new unresolved reference set
     ///
     /// ### Arguments
@@ -1044,6 +1104,14 @@ impl<T: Sized> TableMaker<T> {
     /// The iterator over the cells
     pub fn iter(&self) -> impl Iterator<Item = &TableCell<T>> {
         self.table.iter()
+    }
+
+    pub fn into_inner(self) -> Vec<TableCell<T>> {
+        self.table
+    }
+
+    pub fn len(&self) -> usize {
+        self.table.len()
     }
 }
 

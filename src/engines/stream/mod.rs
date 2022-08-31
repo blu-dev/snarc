@@ -1,6 +1,7 @@
 use std::{
     cell::{Ref, RefMut},
     collections::BTreeMap,
+    io::{Seek, Write},
     path::Path,
     rc::Rc,
 };
@@ -24,7 +25,7 @@ use super::{read_table, table::*, HashKey};
 pub struct StreamEngine {
     /// The lookup from the hash of a file path to the
     /// [`StreamPath`]
-    path_lookup: BTreeMap<Hash40, TableCell<StreamPath>>,
+    pub(crate) path_lookup: BTreeMap<Hash40, TableCell<StreamPath>>,
 
     /// All of the folders in the stream filesystem
     pub folders: Vec<TableCell<StreamFolder>>,
@@ -129,6 +130,17 @@ impl StreamEngine {
             .get(&hash.to_hash())
             .map(TableCell::get_mut)
     }
+
+    pub fn reorganize(self) -> Self {
+        let writer = StreamWriter::from_engine(self);
+        Self {
+            path_lookup: writer.path_lookup,
+            folders: writer.folders.into_inner(),
+            paths: writer.paths.into_inner(),
+            links: writer.links.into_inner(),
+            metadatas: writer.metadatas.into_inner(),
+        }
+    }
 }
 
 /// Reorganizes the tables from the engine, optionally serializing them to bytes
@@ -144,16 +156,16 @@ pub struct StreamWriter {
     path_lookup: BTreeMap<Hash40, TableCell<StreamPath>>,
 
     /// The new table for folders
-    folders: TableMaker<StreamFolder>,
+    pub(crate) folders: TableMaker<StreamFolder>,
 
     /// The new table for paths
-    paths: TableMaker<StreamPath>,
+    pub(crate) paths: TableMaker<StreamPath>,
 
     /// The new table for links
-    links: TableMaker<StreamLink>,
+    pub(crate) links: TableMaker<StreamLink>,
 
     /// The new table for metadatas
-    metadatas: TableMaker<StreamMetadata>,
+    pub(crate) metadatas: TableMaker<StreamMetadata>,
 }
 
 impl StreamWriter {
@@ -299,6 +311,32 @@ impl StreamWriter {
         std::fs::write(path.join("stream_links.bin"), links.into_inner())?;
         std::fs::write(path.join("stream_metadatas.bin"), metadatas.into_inner())?;
         std::fs::write(path.join("stream_path_keys.bin"), lookup.into_inner())?;
+
+        Ok(())
+    }
+
+    pub fn to_memory<W: Seek + Write>(self, writer: &mut W) -> binrw::BinResult<()> {
+        let this = Rc::new(self);
+
+        for folder in this.folders.iter() {
+            folder.write_with_args(writer, Rc::clone(&this))?;
+        }
+
+        for (hash, cell) in this.path_lookup.iter() {
+            HashKey::new(*hash, this.paths.get_index(cell) as usize).write_to(writer)?;
+        }
+
+        for path in this.paths.iter() {
+            path.write_with_args(writer, Rc::clone(&this))?;
+        }
+
+        for link in this.links.iter() {
+            link.write_with_args(writer, Rc::clone(&this))?;
+        }
+
+        for metadata in this.metadatas.iter() {
+            metadata.write_to(writer)?;
+        }
 
         Ok(())
     }
