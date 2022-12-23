@@ -44,6 +44,7 @@ const INVALID_INDEX32: u32 = INVALID_INDEX as u32;
 
 const HASH_MASK: u64 = 0x0000_00FF_FFFF_FFFF;
 
+#[const_trait]
 pub trait Hashable {
     fn to_hash(self) -> Hash40;
 }
