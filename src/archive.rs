@@ -57,8 +57,10 @@ impl ArchiveTablesHeader {
         }
 
         reader.read_exact(&mut compressed_data)?;
+        let time = std::time::Instant::now();
         let decompressed_data =
             crate::decompress_data_with_size(&compressed_data, self.decompressed_size);
+        println!("{}", time.elapsed().as_secs_f32());
 
         reader.seek(io::SeekFrom::Start(
             (offset + self.compressed_section_size) as u64,
